@@ -7,7 +7,7 @@ It can also download a video URL with `yt-dlp` and split the loaded video into 1
 ## Requirements
 
 - Node.js
-- FFmpeg available on `PATH`
+- FFmpeg installed and discoverable through `PATH`, `FFMPEG_PATH`, WinGet, Chocolatey, Scoop, or next to the app executable
 - yt-dlp available as `yt-dlp` or `python -m yt_dlp`
 
 Install or update `yt-dlp` on this machine with:

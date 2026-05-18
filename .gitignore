@@ -4,4 +4,3 @@ dist/
 out/
 release/*
 !release/.gitkeep
-!release/*.exe
