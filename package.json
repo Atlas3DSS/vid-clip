@@ -1,0 +1,48 @@
+{
+  "name": "vid-clip",
+  "version": "0.1.0",
+  "description": "Simple desktop video clipper for Windows.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "package": "electron-builder --win portable --x64",
+    "smoke": "node scripts/smoke-test.js",
+    "tools:install": "python -m pip install --user -U yt-dlp"
+  },
+  "keywords": [],
+  "author": "",
+  "author": "Vid Clip",
+  "license": "MIT",
+  "build": {
+    "appId": "com.vidclip.app",
+    "productName": "Vid Clip",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Vid-Clip-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "Vid-Clip-${version}-${arch}.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^41.6.1",
+    "electron-builder": "^26.8.1"
+  }
+}

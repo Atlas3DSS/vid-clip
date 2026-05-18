@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vid Clip</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+    <script defer src="./src/renderer.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">VC</div>
+          <div>
+            <h1>Vid Clip</h1>
+            <p id="sourceName">No video selected</p>
+          </div>
+        </div>
+        <form id="urlForm" class="url-form">
+          <input id="urlInput" type="text" inputmode="url" autocomplete="off" placeholder="Paste video URL" />
+          <button id="downloadButton" class="button secondary" type="submit">Download URL</button>
+        </form>
+        <div class="topbar-actions">
+          <button id="openButton" class="button secondary" type="button">Open Video</button>
+          <button id="exportButton" class="button primary" type="button" disabled>Export Clip</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="preview-panel" aria-label="Video preview">
+          <div class="video-frame">
+            <video id="video" controls playsinline></video>
+            <div id="emptyState" class="empty-state">No video selected</div>
+          </div>
+          <div class="transport-row">
+            <button id="previewButton" class="button secondary compact" type="button" disabled>Play Selection</button>
+            <button id="setStartButton" class="button ghost compact" type="button" disabled>Set Start</button>
+            <button id="setEndButton" class="button ghost compact" type="button" disabled>Set End</button>
+            <div class="time-readout">
+              <span id="currentTime">00:00.00</span>
+              <span>/</span>
+              <span id="durationTime">00:00.00</span>
+            </div>
+          </div>
+        </section>
+
+        <aside class="control-panel" aria-label="Clip controls">
+          <section class="panel-section">
+            <div class="section-heading">
+              <h2>Trim</h2>
+              <output id="selectionLabel">00:00.00 - 00:00.00</output>
+            </div>
+
+            <label class="range-control" for="startSlider">
+              <span>Start</span>
+              <input id="startSlider" type="range" min="0" max="0" step="0.01" value="0" disabled />
+            </label>
+
+            <label class="range-control" for="endSlider">
+              <span>End</span>
+              <input id="endSlider" type="range" min="0" max="0" step="0.01" value="0" disabled />
+            </label>
+
+            <div class="number-grid">
+              <label>
+                <span>Start</span>
+                <input id="startInput" type="number" min="0" step="0.01" value="0" disabled />
+              </label>
+              <label>
+                <span>End</span>
+                <input id="endInput" type="number" min="0" step="0.01" value="0" disabled />
+              </label>
+              <label>
+                <span>Length</span>
+                <input id="lengthInput" type="number" min="0.05" step="0.01" value="0" disabled />
+              </label>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-heading">
+              <h2>Export</h2>
+              <output id="progressLabel">Idle</output>
+            </div>
+            <label class="select-control" for="encodingSelect">
+              <span>Encoding</span>
+              <select id="encodingSelect">
+                <option value="gpu-auto">GPU Auto</option>
+                <option value="cpu">CPU</option>
+              </select>
+            </label>
+            <p id="encodingInfo" class="encoding-info">Checking GPU encoder</p>
+            <progress id="exportProgress" max="100" value="0"></progress>
+            <p id="statusLine" class="status-line">Ready</p>
+            <button id="splitButton" class="button ghost full" type="button" disabled>Split Into 15s Clips</button>
+            <button id="showOutputButton" class="button secondary full" type="button" hidden>Show Export</button>
+          </section>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>
