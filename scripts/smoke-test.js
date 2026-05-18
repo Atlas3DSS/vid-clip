@@ -2,7 +2,7 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { DEFAULT_FFMPEG_PATH, exportClip, getEncodingCapabilities, splitVideoIntoClips } = require('../src/clipper');
+const { DEFAULT_FFMPEG_PATH, exportClip, getEncodingCapabilities, resolveFfmpegPath, splitVideoIntoClips } = require('../src/clipper');
 const { buildYtDlpArgs, extractHttpUrl, getYtDlpFailureMessage, parseYtDlpProgress, resolveYtDlpCommand } = require('../src/downloader');
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vid-clip-'));
@@ -19,7 +19,29 @@ function run(command, args) {
 }
 
 async function main() {
-  run(DEFAULT_FFMPEG_PATH, [
+  const originalPath = process.env.PATH;
+  const originalWindowsPath = process.env.Path;
+  let resolvedFfmpegPath;
+
+  try {
+    process.env.PATH = '';
+    process.env.Path = '';
+    resolvedFfmpegPath = await resolveFfmpegPath(DEFAULT_FFMPEG_PATH);
+  } finally {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+
+    if (originalWindowsPath === undefined) {
+      delete process.env.Path;
+    } else {
+      process.env.Path = originalWindowsPath;
+    }
+  }
+
+  run(resolvedFfmpegPath, [
     '-hide_banner',
     '-y',
     '-f',
@@ -132,7 +154,7 @@ async function main() {
   }
 
   console.log(
-    `Smoke test OK: ${duration.toFixed(2)}s clip exported, GPU auto used ${gpuAutoResult.encoding.label}, split wrote 3 clips, detected ${gpuLabel}, found yt-dlp ${ytDlp.version}.`
+    `Smoke test OK: ${duration.toFixed(2)}s clip exported, GPU auto used ${gpuAutoResult.encoding.label}, split wrote 3 clips, detected ${gpuLabel}, resolved FFmpeg at ${resolvedFfmpegPath}, found yt-dlp ${ytDlp.version}.`
   );
 }
 

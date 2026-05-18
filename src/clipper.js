@@ -6,6 +6,7 @@ const DEFAULT_FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
 const DEFAULT_SEGMENT_SECONDS = 15;
 const HARDWARE_PROBE_TIMEOUT_MS = 8000;
 const PROCESS_LIST_TIMEOUT_MS = 5000;
+const FFMPEG_PROBE_TIMEOUT_MS = 5000;
 
 const CPU_ENCODING_PLAN = {
   id: 'cpu',
@@ -49,6 +50,7 @@ const HARDWARE_ENCODER_CANDIDATES = [
 ];
 
 const capabilitiesCache = new Map();
+const ffmpegPathCache = new Map();
 
 function assertFile(path, name) {
   if (typeof path !== 'string' || path.trim() === '') {
@@ -126,6 +128,118 @@ function parseProgressSeconds(line) {
   return Number(hours) * 3600 + Number(minutes) * 60 + Number(seconds);
 }
 
+function addCandidate(candidates, candidate) {
+  if (typeof candidate !== 'string' || candidate.trim() === '') {
+    return;
+  }
+
+  const normalized = candidate.trim();
+  if (!candidates.includes(normalized)) {
+    candidates.push(normalized);
+  }
+}
+
+function getEnvironmentPathEntries() {
+  const rawPath = process.env.PATH || process.env.Path || '';
+  return rawPath.split(path.delimiter).filter(Boolean);
+}
+
+function getExecutableSearchRoots() {
+  const roots = [
+    process.cwd(),
+    __dirname,
+    path.join(__dirname, '..'),
+    process.resourcesPath,
+    process.execPath ? path.dirname(process.execPath) : '',
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links') : '',
+    process.env.ProgramData ? path.join(process.env.ProgramData, 'chocolatey', 'bin') : '',
+    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'scoop', 'shims') : '',
+    process.env.ProgramData ? path.join(process.env.ProgramData, 'scoop', 'shims') : '',
+    process.env.ProgramFiles ? path.join(process.env.ProgramFiles, 'ffmpeg', 'bin') : '',
+    process.env['ProgramFiles(x86)'] ? path.join(process.env['ProgramFiles(x86)'], 'ffmpeg', 'bin') : ''
+  ];
+
+  return roots.filter(Boolean);
+}
+
+function findNamedFile(rootDirectory, fileName, maxDepth) {
+  if (!rootDirectory || maxDepth < 0 || !fs.existsSync(rootDirectory)) {
+    return [];
+  }
+
+  const matches = [];
+  let entries = [];
+
+  try {
+    entries = fs.readdirSync(rootDirectory, { withFileTypes: true });
+  } catch (error) {
+    return matches;
+  }
+
+  for (const entry of entries) {
+    const entryPath = path.join(rootDirectory, entry.name);
+    if (entry.isFile() && entry.name.toLowerCase() === fileName.toLowerCase()) {
+      matches.push(entryPath);
+      continue;
+    }
+
+    if (entry.isDirectory() && maxDepth > 0) {
+      matches.push(...findNamedFile(entryPath, fileName, maxDepth - 1));
+    }
+  }
+
+  return matches;
+}
+
+function getWingetFfmpegCandidates() {
+  const packagesRoot = process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Packages')
+    : '';
+
+  if (!packagesRoot || !fs.existsSync(packagesRoot)) {
+    return [];
+  }
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(packagesRoot, { withFileTypes: true });
+  } catch (error) {
+    return [];
+  }
+
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.toLowerCase().includes('ffmpeg'))
+    .flatMap((entry) => findNamedFile(path.join(packagesRoot, entry.name), 'ffmpeg.exe', 5));
+}
+
+function buildFfmpegCandidates(ffmpegPath = DEFAULT_FFMPEG_PATH) {
+  const candidates = [];
+  const requestedPath = ffmpegPath || DEFAULT_FFMPEG_PATH;
+  const requestedIsFilePath = path.isAbsolute(requestedPath) || requestedPath.includes('\\') || requestedPath.includes('/');
+
+  addCandidate(candidates, process.env.FFMPEG_PATH);
+  addCandidate(candidates, requestedPath);
+
+  if (!requestedIsFilePath) {
+    const executableName = requestedPath.toLowerCase().endsWith('.exe') ? requestedPath : `${requestedPath}.exe`;
+
+    for (const pathEntry of getEnvironmentPathEntries()) {
+      addCandidate(candidates, path.join(pathEntry, executableName));
+    }
+
+    for (const root of getExecutableSearchRoots()) {
+      addCandidate(candidates, path.join(root, executableName));
+      addCandidate(candidates, path.join(root, 'bin', executableName));
+    }
+
+    for (const wingetCandidate of getWingetFfmpegCandidates()) {
+      addCandidate(candidates, wingetCandidate);
+    }
+  }
+
+  return candidates;
+}
+
 function runProcess(command, args, timeoutMs) {
   return new Promise((resolve) => {
     const child = spawn(command, args, { windowsHide: true });
@@ -181,8 +295,37 @@ function runProcess(command, args, timeoutMs) {
   });
 }
 
+async function resolveFfmpegPath(ffmpegPath = DEFAULT_FFMPEG_PATH) {
+  const cacheKey = ffmpegPath || DEFAULT_FFMPEG_PATH;
+  if (ffmpegPathCache.has(cacheKey)) {
+    return ffmpegPathCache.get(cacheKey);
+  }
+
+  const promise = (async () => {
+    const candidates = buildFfmpegCandidates(ffmpegPath);
+
+    for (const candidate of candidates) {
+      const result = await runProcess(candidate, ['-hide_banner', '-version'], FFMPEG_PROBE_TIMEOUT_MS);
+      if (result.code === 0) {
+        return candidate;
+      }
+    }
+
+    throw new Error(
+      [
+        'Could not find FFmpeg.',
+        'Install FFmpeg, set FFMPEG_PATH, or put ffmpeg.exe next to Vid Clip.exe.'
+      ].join(' ')
+    );
+  })();
+
+  ffmpegPathCache.set(cacheKey, promise);
+  return promise;
+}
+
 async function listAvailableEncoderNames(ffmpegPath = DEFAULT_FFMPEG_PATH) {
-  const result = await runProcess(ffmpegPath, ['-hide_banner', '-encoders'], PROCESS_LIST_TIMEOUT_MS);
+  const resolvedFfmpegPath = await resolveFfmpegPath(ffmpegPath);
+  const result = await runProcess(resolvedFfmpegPath, ['-hide_banner', '-encoders'], PROCESS_LIST_TIMEOUT_MS);
   const output = `${result.stdout}\n${result.stderr}`;
 
   if (result.code !== 0) {
@@ -201,8 +344,9 @@ async function listAvailableEncoderNames(ffmpegPath = DEFAULT_FFMPEG_PATH) {
 }
 
 async function testHardwareEncoder(ffmpegPath, plan) {
+  const resolvedFfmpegPath = await resolveFfmpegPath(ffmpegPath);
   const result = await runProcess(
-    ffmpegPath,
+    resolvedFfmpegPath,
     [
       '-hide_banner',
       '-v',
@@ -225,12 +369,13 @@ async function testHardwareEncoder(ffmpegPath, plan) {
 }
 
 async function getEncodingCapabilities(ffmpegPath = DEFAULT_FFMPEG_PATH) {
-  if (capabilitiesCache.has(ffmpegPath)) {
-    return capabilitiesCache.get(ffmpegPath);
+  const resolvedFfmpegPath = await resolveFfmpegPath(ffmpegPath);
+  if (capabilitiesCache.has(resolvedFfmpegPath)) {
+    return capabilitiesCache.get(resolvedFfmpegPath);
   }
 
   const promise = (async () => {
-    const availableNames = await listAvailableEncoderNames(ffmpegPath);
+    const availableNames = await listAvailableEncoderNames(resolvedFfmpegPath);
     const hardwareEncoders = [];
 
     for (const plan of HARDWARE_ENCODER_CANDIDATES) {
@@ -238,7 +383,7 @@ async function getEncodingCapabilities(ffmpegPath = DEFAULT_FFMPEG_PATH) {
         continue;
       }
 
-      const works = await testHardwareEncoder(ffmpegPath, plan);
+      const works = await testHardwareEncoder(resolvedFfmpegPath, plan);
       if (works) {
         hardwareEncoders.push({
           ...plan,
@@ -249,22 +394,24 @@ async function getEncodingCapabilities(ffmpegPath = DEFAULT_FFMPEG_PATH) {
 
     return {
       cpuEncoder: serializeEncodingPlan(CPU_ENCODING_PLAN),
+      ffmpegPath: resolvedFfmpegPath,
       hardwareEncoders: hardwareEncoders.map(serializeEncodingPlan),
       preferredEncoder: hardwareEncoders.length > 0 ? serializeEncodingPlan(hardwareEncoders[0]) : serializeEncodingPlan(CPU_ENCODING_PLAN)
     };
   })();
 
-  capabilitiesCache.set(ffmpegPath, promise);
+  capabilitiesCache.set(resolvedFfmpegPath, promise);
   return promise;
 }
 
 async function resolveEncodingPlan({ encodingMode = 'gpu-auto', ffmpegPath = DEFAULT_FFMPEG_PATH } = {}) {
+  const resolvedFfmpegPath = await resolveFfmpegPath(ffmpegPath);
   const normalizedMode = normalizeEncodingMode(encodingMode);
   if (normalizedMode === 'cpu') {
     return getCpuEncodingPlan();
   }
 
-  const capabilities = await getEncodingCapabilities(ffmpegPath);
+  const capabilities = await getEncodingCapabilities(resolvedFfmpegPath);
   const preferredHardware = HARDWARE_ENCODER_CANDIDATES.find((plan) =>
     capabilities.hardwareEncoders.some((encoder) => encoder.id === plan.id)
   );
@@ -345,11 +492,12 @@ async function exportClip({
     throw new Error('Input video does not exist.');
   }
 
+  const resolvedFfmpegPath = await resolveFfmpegPath(ffmpegPath);
   const normalizedMode = normalizeEncodingMode(encodingMode);
-  const plan = encodingPlan || (await resolveEncodingPlan({ encodingMode: normalizedMode, ffmpegPath }));
+  const plan = encodingPlan || (await resolveEncodingPlan({ encodingMode: normalizedMode, ffmpegPath: resolvedFfmpegPath }));
 
   try {
-    return await exportWithPlan({ inputPath, outputPath, startSeconds, durationSeconds, ffmpegPath, onProgress, encodingPlan: plan });
+    return await exportWithPlan({ inputPath, outputPath, startSeconds, durationSeconds, ffmpegPath: resolvedFfmpegPath, onProgress, encodingPlan: plan });
   } catch (error) {
     if (normalizedMode !== 'gpu-auto' || !plan.isHardware) {
       throw error;
@@ -361,7 +509,7 @@ async function exportClip({
       outputPath,
       startSeconds,
       durationSeconds,
-      ffmpegPath,
+      ffmpegPath: resolvedFfmpegPath,
       onProgress,
       encodingPlan: fallbackPlan
     });
@@ -412,12 +560,13 @@ async function splitVideoIntoClips({
     throw new Error('Input video does not exist.');
   }
 
+  const resolvedFfmpegPath = await resolveFfmpegPath(ffmpegPath);
   const parentDirectory = path.dirname(inputPath);
   const outputDirectory = await createUniqueDirectory(parentDirectory, getSplitFolderName(inputPath, segmentSeconds));
   const clipCount = Math.ceil(durationSeconds / segmentSeconds);
   const outputs = [];
   const normalizedMode = normalizeEncodingMode(encodingMode);
-  let plan = await resolveEncodingPlan({ encodingMode: normalizedMode, ffmpegPath });
+  let plan = await resolveEncodingPlan({ encodingMode: normalizedMode, ffmpegPath: resolvedFfmpegPath });
   let fallbackFrom = null;
   let completedSeconds = 0;
 
@@ -448,7 +597,7 @@ async function splitVideoIntoClips({
         outputPath,
         startSeconds,
         durationSeconds: clipDuration,
-        ffmpegPath,
+        ffmpegPath: resolvedFfmpegPath,
         encodingMode: normalizedMode,
         encodingPlan: plan,
         onProgress: progressHandler
@@ -466,7 +615,7 @@ async function splitVideoIntoClips({
         outputPath,
         startSeconds,
         durationSeconds: clipDuration,
-        ffmpegPath,
+        ffmpegPath: resolvedFfmpegPath,
         encodingMode: 'cpu',
         encodingPlan: plan,
         onProgress: progressHandler
@@ -505,6 +654,7 @@ module.exports = {
   formatSeconds,
   getEncodingCapabilities,
   parseProgressSeconds,
+  resolveFfmpegPath,
   resolveEncodingPlan,
   splitVideoIntoClips
 };
