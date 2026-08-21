@@ -6,6 +6,7 @@ const { pathToFileURL } = require('node:url');
 const DOWNLOAD_FOLDER_NAME = 'Vid Clip Downloads';
 const PROBE_TIMEOUT_MS = 6000;
 const MEDIA_EXTENSIONS = new Set(['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v', '.wmv']);
+const AUDIO_EXTENSIONS = new Set(['.wav', '.mp3', '.m4a', '.aac', '.flac', '.ogg', '.opus', '.webm']);
 
 const commandCache = {
   value: null
@@ -148,6 +149,11 @@ function buildDownloadDirectoryName() {
   return `download-${timestamp}`;
 }
 
+function buildTranslationDirectoryName() {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `autotranslate-${timestamp}`;
+}
+
 function buildYtDlpArgs({ url, outputDirectory }) {
   return [
     '--newline',
@@ -165,6 +171,31 @@ function buildYtDlpArgs({ url, outputDirectory }) {
   ];
 }
 
+function buildAudioDownloadArgs({ url, outputDirectory, ffmpegPath }) {
+  const args = [
+    '--newline',
+    '--no-playlist',
+    '--extract-audio',
+    '--audio-format',
+    'wav',
+    '--audio-quality',
+    '0',
+    '--postprocessor-args',
+    'ffmpeg:-ac 1 -ar 24000',
+    '-P',
+    outputDirectory,
+    '-o',
+    'source-audio.%(ext)s'
+  ];
+
+  if (typeof ffmpegPath === 'string' && ffmpegPath.trim()) {
+    args.push('--ffmpeg-location', ffmpegPath);
+  }
+
+  args.push('--', url);
+  return args;
+}
+
 function parseYtDlpProgress(line) {
   const percentMatch = /\[download\]\s+(\d+(?:\.\d+)?)%/.exec(line);
   if (percentMatch) {
@@ -178,6 +209,13 @@ function parseYtDlpProgress(line) {
     return {
       ratio: 0.99,
       status: 'Merging video and audio'
+    };
+  }
+
+  if (line.includes('[ExtractAudio]')) {
+    return {
+      ratio: 0.99,
+      status: 'Converting source audio to WAV'
     };
   }
 
@@ -234,6 +272,33 @@ async function findDownloadedVideo(outputDirectory) {
 
   if (candidates.length === 0) {
     throw new Error('Download finished, but no video file was found.');
+  }
+
+  return candidates[0];
+}
+
+async function findDownloadedAudio(outputDirectory) {
+  const entries = await fs.promises.readdir(outputDirectory, { withFileTypes: true });
+  const candidates = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    const filePath = path.join(outputDirectory, entry.name);
+    const extension = path.extname(entry.name).toLowerCase();
+    if (!AUDIO_EXTENSIONS.has(extension) || entry.name.endsWith('.part')) {
+      continue;
+    }
+
+    const stats = await fs.promises.stat(filePath);
+    candidates.push({ filePath, stats });
+  }
+
+  candidates.sort((left, right) => right.stats.size - left.stats.size);
+  if (candidates.length === 0) {
+    throw new Error('Download finished, but no audio file was found.');
   }
 
   return candidates[0];
@@ -300,9 +365,74 @@ async function downloadVideoFromUrl({ url, downloadRoot, onProgress }) {
   });
 }
 
+async function downloadAudioFromUrl({ url, downloadRoot, ffmpegPath, onProgress }) {
+  const normalizedUrl = extractHttpUrl(url);
+  const ytDlp = await resolveYtDlpCommand();
+  const outputDirectory = await createUniqueDirectory(downloadRoot, buildTranslationDirectoryName());
+  const args = [
+    ...ytDlp.prefixArgs,
+    ...buildAudioDownloadArgs({
+      url: normalizedUrl,
+      outputDirectory,
+      ffmpegPath
+    })
+  ];
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(ytDlp.command, args, { windowsHide: true });
+    let output = '';
+
+    const handleOutput = (chunk) => {
+      const text = chunk.toString();
+      output += text;
+      for (const line of text.split(/\r?\n/)) {
+        const progress = parseYtDlpProgress(line);
+        if (progress && typeof onProgress === 'function') {
+          onProgress({
+            ...progress,
+            outputDirectory,
+            downloader: `yt-dlp ${ytDlp.version}`
+          });
+        }
+      }
+    };
+
+    child.stdout.on('data', handleOutput);
+    child.stderr.on('data', handleOutput);
+    child.on('error', (error) => {
+      reject(new Error(`Could not start yt-dlp: ${error.message}`));
+    });
+    child.on('close', async (code) => {
+      if (code !== 0) {
+        reject(new Error(getYtDlpFailureMessage({ code, output, requestedUrl: normalizedUrl })));
+        return;
+      }
+
+      try {
+        const downloaded = await findDownloadedAudio(outputDirectory);
+        if (typeof onProgress === 'function') {
+          onProgress({ ratio: 1, status: 'Source audio download complete', outputDirectory });
+        }
+        resolve({
+          path: downloaded.filePath,
+          name: path.basename(downloaded.filePath),
+          size: downloaded.stats.size,
+          outputDirectory,
+          downloadedFrom: normalizedUrl,
+          downloader: `yt-dlp ${ytDlp.version}`
+        });
+      } catch (error) {
+        reject(error);
+      }
+    });
+  });
+}
+
 module.exports = {
   DOWNLOAD_FOLDER_NAME,
+  buildAudioDownloadArgs,
   buildYtDlpArgs,
+  downloadAudioFromUrl,
   downloadVideoFromUrl,
   extractHttpUrl,
   getYtDlpFailureMessage,

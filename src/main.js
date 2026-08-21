@@ -2,8 +2,19 @@ const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
-const { DEFAULT_SEGMENT_SECONDS, exportClip, getEncodingCapabilities, splitVideoIntoClips } = require('./clipper');
-const { DOWNLOAD_FOLDER_NAME, downloadVideoFromUrl, resolveYtDlpCommand } = require('./downloader');
+const {
+  DEFAULT_SEGMENT_SECONDS,
+  exportClip,
+  getEncodingCapabilities,
+  resolveFfmpegPath,
+  splitVideoIntoClips
+} = require('./clipper');
+const { autoTranslateMedia, getAutoTranslateStatus } = require('./autotranslate');
+const {
+  DOWNLOAD_FOLDER_NAME,
+  downloadVideoFromUrl,
+  resolveYtDlpCommand
+} = require('./downloader');
 
 let mainWindow;
 
@@ -148,7 +159,57 @@ ipcMain.handle('video:split', async (event, payload = {}) => {
   return result;
 });
 
+ipcMain.handle('video:auto-translate', async (event, payload = {}) => {
+  const inputPath = typeof payload.inputPath === 'string' ? payload.inputPath.trim() : '';
+  const url = typeof payload.url === 'string' ? payload.url.trim() : '';
+  if (!inputPath && !url) {
+    throw new Error('Open a video or enter a video URL before starting AutoTranslate.');
+  }
+
+  const sendProgress = (progress) => {
+    event.sender.send('video:export-progress', { ...progress, operation: 'autotranslate' });
+  };
+  let sourcePath = inputPath;
+  let outputDirectory;
+  let workerProgressStart = 0;
+
+  if (url) {
+    const download = await downloadVideoFromUrl({
+      url,
+      downloadRoot: getDownloadRoot(),
+      onProgress: (progress) => {
+        sendProgress({
+          ...progress,
+          ratio: progress.ratio * 0.08,
+          status:
+            progress.status === 'Downloading video'
+              ? 'Downloading source video and audio'
+              : progress.status || 'Downloading source video and audio'
+        });
+      }
+    });
+    sourcePath = download.path;
+    outputDirectory = download.outputDirectory;
+    workerProgressStart = 0.08;
+  }
+
+  return autoTranslateMedia({
+    inputPath: sourcePath,
+    outputDirectory,
+    targetLanguage: payload.targetLanguage,
+    chunkSeconds: payload.chunkSeconds,
+    onProgress: (progress) => {
+      sendProgress({
+        ...progress,
+        ratio: workerProgressStart + (1 - workerProgressStart) * progress.ratio
+      });
+    }
+  });
+});
+
 ipcMain.handle('video:encoding-capabilities', async () => getEncodingCapabilities());
+
+ipcMain.handle('video:auto-translate-status', async () => getAutoTranslateStatus());
 
 ipcMain.handle('video:downloader-status', async () => {
   const command = await resolveYtDlpCommand();

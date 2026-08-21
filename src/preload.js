@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('vidClip', {
   chooseExportPath: (payload) => ipcRenderer.invoke('video:choose-export-path', payload),
   exportClip: (payload) => ipcRenderer.invoke('video:export', payload),
   splitIntoClips: (payload) => ipcRenderer.invoke('video:split', payload),
+  autoTranslate: (payload) => ipcRenderer.invoke('video:auto-translate', payload),
+  getAutoTranslateStatus: () => ipcRenderer.invoke('video:auto-translate-status'),
   getEncodingCapabilities: () => ipcRenderer.invoke('video:encoding-capabilities'),
   getDownloaderStatus: () => ipcRenderer.invoke('video:downloader-status'),
   showOutput: (outputPath) => ipcRenderer.invoke('video:show-output', outputPath),

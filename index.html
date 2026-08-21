@@ -78,6 +78,40 @@
             </div>
           </section>
 
+          <section class="panel-section compact-section">
+            <div class="section-heading">
+              <h2>AutoTranslate</h2>
+              <output id="translateState">Checking Qwen</output>
+            </div>
+            <div class="translate-grid">
+              <label class="select-control" for="targetLanguageSelect">
+                <span>Target language</span>
+                <select id="targetLanguageSelect">
+                  <option value="English" selected>English</option>
+                  <option value="Chinese">Chinese</option>
+                  <option value="Japanese">Japanese</option>
+                  <option value="Korean">Korean</option>
+                  <option value="German">German</option>
+                  <option value="French">French</option>
+                  <option value="Russian">Russian</option>
+                  <option value="Portuguese">Portuguese</option>
+                  <option value="Spanish">Spanish</option>
+                  <option value="Italian">Italian</option>
+                </select>
+              </label>
+              <label class="select-control" for="chunkSecondsInput">
+                <span>Chunk target</span>
+                <input id="chunkSecondsInput" type="number" min="8" max="30" step="1" value="20" />
+              </label>
+            </div>
+            <p id="translateInfo" class="encoding-info">
+              Uses local Qwen ASR, 27B alignment review, and source voice cloning. No hosted API.
+            </p>
+            <button id="autoTranslateButton" class="button primary full" type="button" disabled>
+              AutoTranslate Video
+            </button>
+          </section>
+
           <section class="panel-section">
             <div class="section-heading">
               <h2>Export</h2>

@@ -2,8 +2,22 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const {
+  getAutoTranslateStatus,
+  getOutputFolderName,
+  normalizeChunkSeconds,
+  normalizeTargetLanguage,
+  parseWorkerEvent
+} = require('../src/autotranslate');
 const { DEFAULT_FFMPEG_PATH, exportClip, getEncodingCapabilities, resolveFfmpegPath, splitVideoIntoClips } = require('../src/clipper');
-const { buildYtDlpArgs, extractHttpUrl, getYtDlpFailureMessage, parseYtDlpProgress, resolveYtDlpCommand } = require('../src/downloader');
+const {
+  buildAudioDownloadArgs,
+  buildYtDlpArgs,
+  extractHttpUrl,
+  getYtDlpFailureMessage,
+  parseYtDlpProgress,
+  resolveYtDlpCommand
+} = require('../src/downloader');
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vid-clip-'));
 const inputPath = path.join(tmpDir, 'input.mp4');
@@ -130,6 +144,11 @@ async function main() {
   const parsedDownloadProgress = parseYtDlpProgress('[download]  42.5% of 10.00MiB at 1.00MiB/s ETA 00:05');
   const extractedUrl = extractHttpUrl('yt-dlp --no-playlist "https://example.com/watch?v=abc123"');
   const downloadArgs = buildYtDlpArgs({ url: extractedUrl, outputDirectory: tmpDir });
+  const audioDownloadArgs = buildAudioDownloadArgs({
+    url: extractedUrl,
+    outputDirectory: tmpDir,
+    ffmpegPath: resolvedFfmpegPath
+  });
   const separatorIndex = downloadArgs.indexOf('--');
   const friendlyError = getYtDlpFailureMessage({
     code: 1,
@@ -149,12 +168,38 @@ async function main() {
     throw new Error('yt-dlp args do not separate options from URL.');
   }
 
+  const audioSeparatorIndex = audioDownloadArgs.indexOf('--');
+  if (
+    !audioDownloadArgs.includes('--extract-audio') ||
+    !audioDownloadArgs.includes('--ffmpeg-location') ||
+    audioDownloadArgs[audioSeparatorIndex + 1] !== extractedUrl
+  ) {
+    throw new Error('Audio download args are incomplete.');
+  }
+
   if (!friendlyError.includes('Paste the page/share URL')) {
     throw new Error('Unsupported URL error was not made actionable.');
   }
 
+  if (
+    normalizeTargetLanguage('english') !== 'English' ||
+    normalizeChunkSeconds(100) !== 30 ||
+    getOutputFolderName('interview.mp4', 'English') !== 'interview-autotranslate-english'
+  ) {
+    throw new Error('AutoTranslate input normalization failed.');
+  }
+
+  const workerEvent = parseWorkerEvent('VIDCLIP_EVENT {"ratio":0.5,"status":"Working"}');
+  if (!workerEvent || workerEvent.ratio !== 0.5) {
+    throw new Error('Could not parse AutoTranslate worker progress.');
+  }
+
+  const autoTranslateStatus = await getAutoTranslateStatus({
+    workerPath: path.join(__dirname, '..', 'src', 'autotranslate_worker.py')
+  });
+
   console.log(
-    `Smoke test OK: ${duration.toFixed(2)}s clip exported, GPU auto used ${gpuAutoResult.encoding.label}, split wrote 3 clips, detected ${gpuLabel}, resolved FFmpeg at ${resolvedFfmpegPath}, found yt-dlp ${ytDlp.version}.`
+    `Smoke test OK: ${duration.toFixed(2)}s clip exported, GPU auto used ${gpuAutoResult.encoding.label}, split wrote 3 clips, detected ${gpuLabel}, resolved FFmpeg at ${resolvedFfmpegPath}, found yt-dlp ${ytDlp.version}, and found ${autoTranslateStatus.label}.`
   );
 }
 

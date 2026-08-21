@@ -1,6 +1,8 @@
 const MIN_CLIP_SECONDS = 0.05;
 
 const elements = {
+  autoTranslateButton: document.querySelector('#autoTranslateButton'),
+  chunkSecondsInput: document.querySelector('#chunkSecondsInput'),
   currentTime: document.querySelector('#currentTime'),
   downloadButton: document.querySelector('#downloadButton'),
   durationTime: document.querySelector('#durationTime'),
@@ -24,12 +26,16 @@ const elements = {
   startInput: document.querySelector('#startInput'),
   startSlider: document.querySelector('#startSlider'),
   statusLine: document.querySelector('#statusLine'),
+  targetLanguageSelect: document.querySelector('#targetLanguageSelect'),
+  translateInfo: document.querySelector('#translateInfo'),
+  translateState: document.querySelector('#translateState'),
   urlForm: document.querySelector('#urlForm'),
   urlInput: document.querySelector('#urlInput'),
   video: document.querySelector('#video')
 };
 
 const state = {
+  autoTranslateReady: false,
   duration: 0,
   end: 0,
   exportPath: '',
@@ -77,6 +83,14 @@ function setControlsEnabled(enabled) {
 
   elements.exportButton.disabled = !enabled || state.isBusy;
   elements.encodingSelect.disabled = state.isBusy;
+  elements.targetLanguageSelect.disabled = state.isBusy;
+  elements.chunkSecondsInput.disabled = state.isBusy;
+  updateAutoTranslateEnabled();
+}
+
+function updateAutoTranslateEnabled() {
+  const hasSource = Boolean(state.file || elements.urlInput.value.trim());
+  elements.autoTranslateButton.disabled = state.isBusy || !state.autoTranslateReady || !hasSource;
 }
 
 function setBusy(isBusy, operation = '') {
@@ -89,6 +103,8 @@ function setBusy(isBusy, operation = '') {
   elements.downloadButton.textContent = isBusy && operation === 'download' ? 'Downloading...' : 'Download URL';
   elements.exportButton.textContent = isBusy && operation === 'export' ? 'Exporting...' : 'Export Clip';
   elements.splitButton.textContent = isBusy && operation === 'split' ? 'Splitting...' : 'Split Into 15s Clips';
+  elements.autoTranslateButton.textContent =
+    isBusy && operation === 'autotranslate' ? 'AutoTranslating...' : 'AutoTranslate Video';
 }
 
 function syncControlBounds() {
@@ -167,6 +183,20 @@ async function loadDownloaderStatus() {
   } catch (error) {
     setStatus('yt-dlp is not installed');
   }
+}
+
+async function loadAutoTranslateStatus() {
+  try {
+    const status = await window.vidClip.getAutoTranslateStatus();
+    state.autoTranslateReady = true;
+    elements.translateState.textContent = 'Local Qwen ready';
+    elements.translateInfo.textContent = `${status.label}. Uses pause-aware ${status.chunkSeconds}s chunks and source voice cloning.`;
+  } catch (error) {
+    state.autoTranslateReady = false;
+    elements.translateState.textContent = 'Setup required';
+    elements.translateInfo.textContent = error.message || 'Install the local Qwen AutoTranslate runtime.';
+  }
+  updateAutoTranslateEnabled();
 }
 
 function loadVideoFile(file, statusMessage = 'Loading video') {
@@ -281,6 +311,11 @@ function updateProgress(progress) {
     return;
   }
 
+  if (progress.currentChunk && progress.chunkCount) {
+    elements.progressLabel.textContent = `${percent}% (${progress.currentChunk}/${progress.chunkCount})`;
+    return;
+  }
+
   elements.progressLabel.textContent = `${percent}%`;
 }
 
@@ -307,12 +342,54 @@ async function downloadFromUrl(event) {
     setStatus('Starting URL download');
 
     const file = await window.vidClip.downloadVideoFromUrl({ url });
+    elements.urlInput.value = '';
     loadVideoFile(file, 'Loading downloaded video');
     state.exportPath = file.outputDirectory;
     updateProgress({ ratio: 1 });
     elements.showOutputButton.hidden = false;
   } catch (error) {
     setStatus(error.message || 'Download failed');
+    elements.progressLabel.textContent = 'Failed';
+  } finally {
+    removeProgressListener();
+    setBusy(false);
+  }
+}
+
+async function autoTranslateVideo() {
+  if (state.isBusy) {
+    return;
+  }
+
+  const url = elements.urlInput.value.trim();
+  const inputPath = url ? '' : state.file?.path || '';
+  if (!url && !inputPath) {
+    setStatus('Open a video or enter a video URL');
+    return;
+  }
+
+  const removeProgressListener = window.vidClip.onExportProgress(updateProgress);
+  try {
+    setBusy(true, 'autotranslate');
+    elements.showOutputButton.hidden = true;
+    elements.exportProgress.value = 0;
+    elements.progressLabel.textContent = '0%';
+    setStatus(url ? 'Downloading source video for AutoTranslate' : 'Starting AutoTranslate');
+
+    const result = await window.vidClip.autoTranslate({
+      chunkSeconds: Number(elements.chunkSecondsInput.value),
+      inputPath,
+      targetLanguage: elements.targetLanguageSelect.value,
+      url
+    });
+    state.exportPath = result.outputPath;
+    updateProgress({ ratio: 1 });
+    setStatus(
+      `AutoTranslate video complete: ${result.chunk_count} time-matched chunks in ${result.target_language}`
+    );
+    elements.showOutputButton.hidden = false;
+  } catch (error) {
+    setStatus(error.message || 'AutoTranslate failed');
     elements.progressLabel.textContent = 'Failed';
   } finally {
     removeProgressListener();
@@ -400,6 +477,7 @@ async function splitIntoClips() {
 }
 
 function bindEvents() {
+  elements.autoTranslateButton.addEventListener('click', autoTranslateVideo);
   elements.openButton.addEventListener('click', openVideo);
   elements.urlForm.addEventListener('submit', downloadFromUrl);
   elements.exportButton.addEventListener('click', exportSelection);
@@ -418,6 +496,7 @@ function bindEvents() {
   elements.startInput.addEventListener('change', (event) => setStartFromValue(event.target.value));
   elements.endInput.addEventListener('change', (event) => setEndFromValue(event.target.value));
   elements.lengthInput.addEventListener('change', (event) => setLengthFromValue(event.target.value));
+  elements.urlInput.addEventListener('input', updateAutoTranslateEnabled);
 
   elements.video.addEventListener('loadedmetadata', handleMetadataLoaded);
   elements.video.addEventListener('timeupdate', handleTimeUpdate);
@@ -432,3 +511,4 @@ resetProgress();
 setControlsEnabled(false);
 loadEncodingCapabilities();
 loadDownloaderStatus();
+loadAutoTranslateStatus();

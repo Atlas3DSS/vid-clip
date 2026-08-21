@@ -10,13 +10,15 @@
     "tools:install": "python -m pip install --user -U yt-dlp"
   },
   "keywords": [],
-  "author": "",
   "author": "Vid Clip",
   "license": "MIT",
   "build": {
     "appId": "com.vidclip.app",
     "productName": "Vid Clip",
     "asar": true,
+    "asarUnpack": [
+      "src/autotranslate_worker.py"
+    ],
     "directories": {
       "output": "release"
     },

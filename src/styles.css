@@ -184,6 +184,8 @@ video {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .panel-section {
@@ -194,6 +196,16 @@ video {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel);
+}
+
+.compact-section {
+  gap: 13px;
+}
+
+.translate-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 118px;
+  gap: 10px;
 }
 
 .section-heading {
@@ -371,6 +383,7 @@ progress::-webkit-progress-value {
   }
 
   .control-panel {
+    overflow: visible;
     padding-bottom: 16px;
   }
 
